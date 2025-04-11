@@ -1,0 +1,73 @@
+name: EKS Multi-Tenant CI/CD
+
+on:
+  workflow_dispatch:
+    inputs:
+      tenant:
+        description: 'Tenant Name'
+        required: true
+      environment:
+        description: 'Environment (dev, uat, prod)'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - uat
+          - prod
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: us-east-1
+      AWS_ACCOUNT_ID: 746669234841
+      ECR_REPO_URL: 746669234841.dkr.ecr.us-east-1.amazonaws.com/testing/roger
+
+    steps:
+    - name: Checkout Repo
+      uses: actions/checkout@v3
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Login to Amazon ECR
+      run: |
+        aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REPO_URL
+
+    - name: Build Docker Image
+      run: |
+        IMAGE_NAME=${{ github.event.inputs.tenant }}-${{ github.event.inputs.environment }}-nginx
+        docker build -t $IMAGE_NAME .
+
+    - name: Tag Docker Image
+      run: |
+        docker tag ${{ github.event.inputs.tenant }}-${{ github.event.inputs.environment }}-nginx $ECR_REPO_URL:${{ github.event.inputs.tenant }}-${{ github.event.inputs.environment }}
+
+    - name: Push Docker Image
+      run: |
+        docker push $ECR_REPO_URL:${{ github.event.inputs.tenant }}-${{ github.event.inputs.environment }}
+
+    # Rest of your Terraform steps...
+    - name: Set up Terraform
+      uses: hashicorp/setup-terraform@v3
+
+    - name: Generate tfvars file
+      run: |
+        cat > ${{ github.event.inputs.tenant }}-${{ github.event.inputs.environment }}.tfvars <<EOF
+        tenant_name = "${{ github.event.inputs.tenant }}"
+        tenant_env = "${{ github.event.inputs.environment }}"
+        EOF
+
+    - name: Terraform Init
+      run: |
+        terraform init -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+                       -backend-config="key=tenants/${{ github.event.inputs.tenant }}/${{ github.event.inputs.environment }}/terraform.tfstate" \
+                       -backend-config="region=${{ env.AWS_REGION }}"
+
+    - name: Terraform Apply
+      run: terraform apply -auto-approve -var-file=${{ github.event.inputs.tenant }}-${{ github.event.inputs.environment }}.tfvars
