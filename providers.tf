@@ -3,7 +3,7 @@ provider "aws" {
 }
 
 data "aws_eks_cluster" "existing" {
-  name = "terraform-eks-test"
+  name = "terraform-eks-test1"
 }
 
 data "aws_eks_cluster_auth" "cluster" {
